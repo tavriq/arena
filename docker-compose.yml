@@ -1,0 +1,42 @@
+name: demo-arena
+
+services:
+  app:
+    build: .
+    image: demo-arena:local
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:18103:8000"
+    mem_limit: 256m
+    cpus: 0.5
+    pids_limit: 64
+    # Root filesystem is read-only; state lives in the volume, scratch space in /tmp.
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m
+    env_file:
+      # LLM_API_KEY, LLM_BASE_URL: the server's shared gateway file, never printed.
+      - path: ../llm.env
+        required: false
+    environment:
+      ARENA_MODEL: "timeweb/gpt-oss-120b"
+      FILTER_MODEL: "timeweb/gpt-oss-120b"
+      DAILY_BUDGET_RUB: "15"
+      RATE_LIMIT_PER_HOUR: "20"
+      RETENTION_DAYS: "30"
+      # nginx on the host reaches the container through the docker bridge.
+      TRUSTED_PROXY: "172.16.0.0/12"
+    volumes:
+      - demo-arena-var:/var/lib/demo-arena
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  demo-arena-var:
