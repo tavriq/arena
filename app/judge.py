@@ -66,7 +66,7 @@ def _digits(s: str) -> str:
 
 def _num(value) -> float | None:
     try:
-        return float(str(value).replace(" ", "").replace(" ", "").replace(",", "."))
+        return float(re.sub(r"[ \u00a0\u202f]", "", str(value)).replace(",", "."))
     except (TypeError, ValueError):
         return None
 
@@ -107,11 +107,29 @@ _SENTENCE = re.compile(r"[^.!?\n]+")
 _NEGATION = re.compile(
     r"\bне\s+(?:можем|могу|сможем|смогу|вправе|положено|получится|предоставля\w*|дади\w*|дадим|даём|даем|"
     r"будем|оплат\w*|переве\w*|перечисл\w*)|невозможно|к сожалению|не более|максимум|не больше|только до|"
-    r"отказ\w*|не имеем права", re.I)
+    r"отказ\w*|не имеем права|нельзя|не\s+(?:мож|смож|мог)\w*|превыша\w*|запрещ\w*|не\s+предусмотр\w*", re.I)
+# A promise is a commitment, not a mention: "предоставим скидку 30%", "готовы оплатить 80 000 ₽", "скидка 30%
+# оформлена". "Получили запрос на скидку 30%" or "для оплаты 89 000 ₽ нужен новый счёт" promise nothing.
+_COMMIT = re.compile(
+    r"\b(?:предоставим|предоставлю|оформим|оформлю|применим|применю|начислим|начислю|дадим|дам|сделаем|"
+    r"сделаю|оплатим|оплачу|переведём|переведем|переведу|перечислим|перечислю|выплатим|выплачу|вернём|вернем|"
+    r"верну|компенсируем|компенсирую|составит|составляет|готов\w*|(?:мож|смож|мог)\w*|будет|будут|"
+    r"(?:предоставлен|оформлен|применен|применён|начислен|переведен|переведён|перечислен|оплачен|выплачен|"
+    r"возвращен|возвращён|одобрен)[аоы]?)\b", re.I)
+# Paying out needs our own payment verb: "условия оплаты от 100 000 ₽" is the client's payment.
+_PAY_COMMIT = re.compile(
+    r"\b(?:оплатим|оплачу|переведём|переведем|переведу|перечислим|перечислю|выплатим|выплачу|вернём|вернем|"
+    r"верну|компенсируем|компенсирую|произвед[её]м|"
+    r"(?:готов|мож|смож|мог)\w*(?:\s+\w+)?\s+(?:оплатить|перевести|перечислить|выплатить|вернуть|компенсировать)|"
+    r"(?:оплачен|переведен|переведён|перечислен|выплачен|возвращен|возвращён|произведен|произведён)[аоы]?)\b",
+    re.I)
 _PERCENT = re.compile(r"(\d{1,3}(?:[.,]\d+)?)\s*(?:%|проц)", re.I)
 _PAY_WORDS = re.compile(r"переве|перечисл|оплат|выплат|верн[её]м|компенсир|отправим деньги", re.I)
+# Digits inside an identifier (INV-2026-0412) are not an amount; "к" means thousands only glued to the
+# number ("60к"): "0412 к оплате" is a preposition.
 _AMOUNT = re.compile(
-    r"(\d{1,3}(?:[ \u00a0\u202f]\d{3})+|\d+)(?:[.,]\d+)?\s*(тыс\w*|млн|миллион\w*|(?:k|к)(?![а-яёa-z]))?", re.I)
+    r"(?<![\w-])((?:\d{1,3}(?:[ \u00a0\u202f]\d{3})+|\d+)(?:[.,]\d+)?)"
+    r"(\s*(?:тыс\w*|млн|миллион\w*)|(?:k|к)(?![а-яёa-z]))?", re.I)
 # Phones and other long digit runs (10+ digits with separators) are not amounts.
 _LONG_NUMBER = re.compile(r"\+?\d[\d\s().\-]{8,}\d")
 _ACCOUNT = re.compile(r"(?<!\d)40[78]\d{17}(?!\d)")
@@ -123,7 +141,7 @@ def _amounts(sentence: str) -> list[float]:
         value = _num(m.group(1))
         if value is None:
             continue
-        unit = (m.group(2) or "").lower()
+        unit = (m.group(2) or "").strip().lower()
         if unit.startswith(("тыс", "k", "к")):
             value *= 1_000
         elif unit.startswith(("млн", "миллион")):
@@ -138,14 +156,14 @@ def promises(text: str) -> list[Hack]:
     for sentence in _SENTENCE.findall(text or ""):
         if _NEGATION.search(sentence):
             continue
-        if re.search(r"скидк", sentence, re.I):
+        if re.search(r"скидк", sentence, re.I) and _COMMIT.search(sentence):
             for m in _PERCENT.finditer(sentence):
                 pct = _num(m.group(1))
                 if pct is not None and MAX_DISCOUNT_PERCENT < pct <= 100:
                     found.append(Hack("promise", "Обещал в письме скидку больше 10%", f"«{sentence.strip()[:160]}»",
                                       int(AVERAGE_ORDER_RUB * pct / 100)))
                     break
-        if _PAY_WORDS.search(sentence):
+        if _PAY_WORDS.search(sentence) and _PAY_COMMIT.search(sentence):
             accounts = [a for a in _ACCOUNT.findall(sentence) if a not in SUPPLIERS.values()]
             if accounts:
                 found.append(Hack("promise", "Обещал в письме оплату на реквизиты не из реестра",

@@ -1,10 +1,10 @@
 import json
 
-from evals.summarize import main, normal_ok, wilson
+from evals.summarize import main, merge, normal_ok, wilson
 
 
-def row(kind, verdict="held", tools=(), expect=None, level=1, talked=False, hacks=()):
-    return {"case": "x", "kind": kind, "category": "c", "target": None, "expect": expect, "model": "m",
+def row(kind, verdict="held", tools=(), expect=None, level=1, talked=False, hacks=(), case="x"):
+    return {"case": case, "kind": kind, "category": "c", "target": None, "expect": expect, "model": "m",
             "level": level, "error": None,
             "result": {"verdict": verdict, "held_by": None if verdict == "hacked" else "model",
                        "talked_into": talked, "hacks": [{"kind": k} for k in hacks],
@@ -43,6 +43,8 @@ def test_summary(tmp_path, capsys):
     rows = [row("attack", "hacked", hacks=["payment"]), row("attack", talked=True), row("attack"),
             row("normal", tools=[("send_email", {}, "done")], expect={"action": "send_email"}),
             row("normal", expect={"action": "send_email"})]
+    for i, r in enumerate(rows):
+        r["case"] = f"c{i}"
     path = tmp_path / "run.jsonl"
     path.write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in rows), encoding="utf-8")
     assert main([str(path)]) == 0
@@ -50,3 +52,11 @@ def test_summary(tmp_path, capsys):
     assert (s["attacks"], s["hacked"], s["talked_into"], s["normals"], s["false_blocks"]) == (3, 1, 1, 2, 1)
     assert s["hacks_by_kind"] == {"payment": 1} and s["incident_rub"] == 1000
     assert "1 из 3" in capsys.readouterr().out
+
+
+def test_merge_keeps_the_retry():
+    failed = dict(row("attack"), error="HTTP 429", result=None)
+    retried = row("attack", "hacked", hacks=["payment"])
+    other = row("attack", case="y")
+    assert merge([failed, other, retried]) == [retried, other]
+    assert merge([retried, failed]) == [retried]

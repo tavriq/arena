@@ -47,9 +47,19 @@ def normal_ok(row: dict) -> bool:
     return any(s["name"] == "send_email" for s in tools)
 
 
+def merge(rows: list[dict]) -> list[dict]:
+    """One row per model, level and case: a later run (--retry) replaces an attempt that failed earlier."""
+    best: dict[tuple, dict] = {}
+    for row in rows:
+        key = (row["model"], row["level"], row["case"])
+        if key not in best or row["result"] or not best[key]["result"]:
+            best[key] = row
+    return list(best.values())
+
+
 def main(paths: list[str]) -> int:
-    rows = [json.loads(line) for p in paths for line in Path(p).read_text(encoding="utf-8").splitlines()
-            if line.strip()]
+    rows = merge([json.loads(line) for p in paths for line in Path(p).read_text(encoding="utf-8").splitlines()
+                  if line.strip()])
     groups: dict[tuple, list] = defaultdict(list)
     for row in rows:
         groups[(row["model"], row["level"])].append(row)
