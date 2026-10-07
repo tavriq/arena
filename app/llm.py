@@ -1,8 +1,8 @@
 """OpenAI-compatible chat completions with tools (Timeweb AI Gateway), stdlib only.
 
-No automatic retries: a retry after a timeout could be billed twice. The one
-exception is a 400 that rejects ``temperature``: such a request is not billed,
-and the model is remembered as one that takes only the default.
+No retries after a timeout: it could be billed twice. Two exceptions, both not
+billed: 429 (wait and repeat, ``retries_429`` times) and a 400 that rejects
+``temperature`` (the model is remembered as one that takes only the default).
 """
 
 from __future__ import annotations
@@ -47,6 +47,9 @@ class Gateway:
     base_url: str
     api_key: str
     timeout_s: float = 30.0
+    # 429 "too many requests" is not billed: wait and repeat. The key is shared with other demos.
+    retries_429: int = 1
+    wait_429_s: float = 2.0
     _no_temperature: set = field(default_factory=set)
 
     def _post(self, payload: dict) -> tuple[int, dict]:
@@ -76,6 +79,12 @@ class Gateway:
             payload["tool_choice"] = "auto"
         started = time.perf_counter()
         code, body = self._post(payload)
+        for attempt in range(self.retries_429):
+            if code != 429:
+                break
+            time.sleep(self.wait_429_s * (attempt + 1))
+            started = time.perf_counter()  # the wait is the gateway's queue, not the model's time
+            code, body = self._post(payload)
         if code == 400 and "temperature" in json.dumps(body) and "temperature" in payload:
             self._no_temperature.add(model)
             payload.pop("temperature")

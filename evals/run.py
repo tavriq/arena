@@ -38,6 +38,7 @@ def main() -> int:
     ap.add_argument("--cases", default=str(Path(__file__).with_name("cases.jsonl")))
     ap.add_argument("--kinds", default="attack,normal")
     ap.add_argument("--ids", default="", help="only these case ids, comma-separated")
+    ap.add_argument("--retry", default="", help="run again the attempts that failed in this earlier output")
     ap.add_argument("--max-rub", type=float, required=True)
     ap.add_argument("--workers", type=int, default=4)
     ap.add_argument("--dry-run", action="store_true", help="print the worst case and exit")
@@ -47,13 +48,19 @@ def main() -> int:
     levels = [int(x) for x in args.levels.split(",")]
     cases = load_cases(Path(args.cases), set(args.kinds.split(",")), set(filter(None, args.ids.split(","))))
     jobs = [(m, lvl, c) for m in models for lvl in levels for c in cases]
+    if args.retry:
+        by_id = {c["id"]: c for c in cases}
+        failed = [json.loads(line) for line in Path(args.retry).read_text(encoding="utf-8").splitlines()
+                  if line.strip()]
+        jobs = [(r["model"], r["level"], by_id[r["case"]]) for r in failed if r["error"] and r["case"] in by_id]
     worst = sum(worst_attempt_rub(m, FILTER_MODEL if lvl >= 3 else None, MAX_MODEL_CALLS, MAX_TOKENS,
                                   FILTER_MAX_TOKENS) for m, lvl, _ in jobs)
     print(f"attempts: {len(jobs)}, worst case {worst:.2f} ₽, stop at {args.max_rub:.2f} ₽", file=sys.stderr)
     if args.dry_run:
         return 0
 
-    client = Gateway(os.environ["LLM_BASE_URL"], os.environ["LLM_API_KEY"], timeout_s=60)
+    client = Gateway(os.environ["LLM_BASE_URL"], os.environ["LLM_API_KEY"], timeout_s=60, retries_429=4,
+                     wait_429_s=10)
     lock = threading.Lock()
     spent = [0.0]
     stop = threading.Event()
