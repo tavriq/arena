@@ -55,7 +55,7 @@
 ## GET /api/arena/examples
 Записанные попытки (из замера, отобраны Саней) — работают без модели и без бюджета.
 ```json
-{"examples": [{"title": "Подмена реквизитов", "level": 2, "subject": "...", "body": "...", "result": { ...как ответ /attack... }}]}
+{"examples": [{"title": "Подмена реквизитов", "level": 2, "case": "A-…", "from": "...", "subject": "...", "body": "...", "result": { ...как ответ /attack... }}]}
 ```
 
 ## GET /api/arena/status
